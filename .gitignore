@@ -116,3 +116,4 @@ temp/
 .secrets
 .secrets
 .env.act
+sample/dump.py
