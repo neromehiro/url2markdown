@@ -1,15 +1,15 @@
 # url2markdown API
 
-FastAPI service that converts any publicly accessible URL (web pages, Notion documents, Google Docs, etc.) into clean Markdown.  
-Internally it relies on the open-source `url2markdown` project (`newspaper3k` + `markdownify`) plus a few HTTP-only fallbacks for tricky, JS-heavy pages.
+公開されている任意のURL（通常のWebページ、Notion文書、Google Docsなど）をクリーンなMarkdownへ変換するFastAPIサービスです。  
+内部的にはオープンソースの `url2markdown` プロジェクト（`newspaper3k` + `markdownify`）と、JSに依存するページ向けのHTTPオンリーなフォールバックを組み合わせています。
 
-## Hosted endpoint
+## ホスティング済みエンドポイント
 
-You can hit the Vercel deployment at `https://url2markdown-seven.vercel.app`. The interactive Swagger UI lives under `https://url2markdown-seven.vercel.app/docs`.
+Vercelにデプロイされた `https://url2markdown-seven.vercel.app` にアクセスできます。Swagger UI は `https://url2markdown-seven.vercel.app/docs` にあります。
 
-> ⚠️ This endpoint is provided as-is for convenience; its uptime and lifetime are not guaranteed and the URL may disappear at any time.
+> ⚠️ 便宜的に公開しているだけで可用性や継続提供を保証しません。URLは予告なく使えなくなる場合があります。
 
-To fetch Markdown for any publicly accessible page, append the full target URL right after `/url/reader/` (URL-encoded if necessary). Example:
+任意のページのMarkdownを取得するには、`/url/reader/` の直後に対象URL（必要に応じてURLエンコード済み）をそのまま付与してください。例:
 
 ```bash
 curl -X GET \
@@ -17,43 +17,43 @@ curl -X GET \
   -H 'accept: application/json'
 ```
 
-## Quick start
+## クイックスタート
 
 ```bash
-# Build & run locally
+# Dockerでビルド＆起動
 docker compose up --build
 
-# or run directly on host (requires Python 3.9+)
+# ホスト上で直接実行する場合（Python 3.9+ 必須）
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-## Deploying to Vercel
+## Vercelへのデプロイ
 
-The repo already contains `vercel.json` plus a serverless entry point under `api/index.py` that imports the FastAPI app from `main.py`. Deploy with the standard Vercel workflow:
+リポジトリには `vercel.json` と `api/index.py`（`main.py` のFastAPIアプリをインポートするサーバレスエントリ）が含まれています。通常のVercelワークフローでデプロイしてください:
 
 ```bash
-npm i -g vercel          # once
-vercel login             # once per machine
-vercel link              # run inside this repo to bind the Vercel project
-vercel deploy --prod     # builds and uploads the FastAPI serverless function
+npm i -g vercel          # 初回のみ
+vercel login             # マシンごとに1回
+vercel link              # リポジトリ内で実行してVercelプロジェクトに紐付け
+vercel deploy --prod     # FastAPIのサーバレス関数をビルドして本番デプロイ
 ```
 
-You can also run `vercel dev` locally to emulate Vercel’s router; every request hits the same FastAPI routes as in Docker.
+`vercel dev` をローカルで動かせば、Dockerと同じFastAPIルートを通るリクエストを再現できます。
 
 ## API
 
-| Method | Path | Description |
-| ------ | ---- | ----------- |
-| `GET` | `/url/reader/{target_url}` | Returns Markdown for the provided URL. Use the full URL after the path segment (FastAPI captures the rest of the path). |
+| メソッド | パス | 説明 |
+| -------- | ---- | ---- |
+| `GET` | `/url/reader/{target_url}` | 指定URLのMarkdownを返します。パス以降に完全なURLを入れると、FastAPIが残りのパスをすべて取り込みます。 |
 
-Example request:
+リクエスト例:
 
 ```
 GET /url/reader/https://www.notion.so/dify-Aimsales-2a99c708e4d880159321d1f2f87f64a3?source=copy_link
 ```
 
-Example response (trimmed):
+レスポンス例（一部省略）:
 
 ```json
 {
@@ -69,17 +69,17 @@ Example response (trimmed):
 }
 ```
 
-## How it works
+## 仕組み
 
-- **url2markdown pipeline** – Uses `newspaper3k` for article extraction and `markdownify` to transform the cleaned HTML into Markdown.
-- **HTML sanitizing** – Removes scripts, styles, nav/footer blocks, forms, and other boilerplate before conversion.
-- **Dynamic rendering** – Everything now stays HTTP-only: Notion pages are fetched via the public `notion-api.splitbee.io` proxy, Google Docs are rewritten to their `export?format=html` endpoint, and any stubborn page falls back to `https://r.jina.ai/<original_url>` for a readable snapshot before converting to Markdown.
-- **Special URL handling** – Google Docs links are transparently rewritten to their `export?format=html` endpoint. Notion links get `?pvs=4` appended for a print-friendly view.
+- **url2markdownパイプライン** – `newspaper3k` で記事を抽出し、`markdownify` で整形済みHTMLをMarkdown化。
+- **HTMLサニタイズ** – スクリプトやスタイル、ナビ/フッター、フォームなどのボイラープレートを除去してから変換。
+- **動的レンダリング** – すべてHTTP経由で完結。Notionページは `notion-api.splitbee.io` 経由、Google Docsは `export?format=html` へ書き換え、難しいページは `https://r.jina.ai/<original_url>` のスナップショットにフォールバック。
+- **特殊URL処理** – Google Docsは自動で `export?format=html` へ、Notionリンクには印刷向けの `?pvs=4` を付与。
 
-## Testing locally
+## ローカルテスト
 
 ```bash
-# Simple smoke test against example.com
+# example.comに対する簡単なスモークテスト
 python - <<'PY'
 import asyncio
 from services.url_reader import convert_url_to_markdown
@@ -90,4 +90,4 @@ asyncio.run(main())
 PY
 ```
 
-For manual API testing, run the server and hit `http://localhost:8000/docs` to try the interactive Swagger UI.
+サーバーを起動した状態で `http://localhost:8000/docs` にアクセスすれば、Swagger UIから手動でAPIを試せます。
