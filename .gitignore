@@ -1,0 +1,118 @@
+# Pythonバイトコード
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 環境設定ファイル
+.env
+.venv/
+venv/
+ENV/
+env.bak/
+env/
+
+# pip環境設定ファイル
+pip-log.txt
+pip-delete-this-directory.txt
+
+# コンパイル成果物
+*.egg-info/
+*.egg
+*.eggs
+*.whl
+
+# テストカバレッジレポート
+htmlcov/
+.tox/
+.nox/
+.coverage
+coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+
+# Jupyter Notebookのチェックポイント
+.ipynb_checkpoints/
+
+# pylint, mypyなどの設定
+.mypy_cache/
+.pyre/
+.pytype/
+.pyright/
+
+# IDEやエディタの設定ファイル
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# MacやLinuxのシステムファイル
+.DS_Store
+*.swp
+*~
+
+# パッケージ管理ツールの成果物
+poetry.lock
+Pipfile.lock
+
+# Docker関連
+docker-compose.override.yml
+.dockerignore
+
+# その他
+*.log
+*.pot
+*.mo
+cline_log.txt
+git_tracking_status.txt
+dump_result.txt
+**/dump_result.txt
+
+# OCR処理関連フォルダ
+# input/
+# output/
+temp/
+
+# 処理結果ファイル
+*.md
+!README.md
+
+# 画像ファイル（サンプル以外を除外）
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.webp
+!module/OCR/send_gpt/img_sample.png
+
+# PDFファイル（サンプル以外を除外）
+*.pdf
+!module/OCR/send_gpt/testtt.pdf
+
+# 追加の画像・文書ファイル形式
+*.tiff
+*.tif
+*.svg
+*.ico
+*.psd
+*.ai
+*.eps
+*.doc
+*.docx
+*.xls
+*.xlsx
+*.ppt
+*.pptx
+*.rtf
+*.odt
+*.ods
+*.odp
+
+# # 本番環境用秘密ファイル
+# *.pem
+.secrets
+.secrets
+.env.act

@@ -1,0 +1,225 @@
+# .github/workflows/main.yml
+name: Azure Web App - Build & Deploy
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - 'README.md'
+      - '*.md'
+  workflow_dispatch:
+
+env:
+  DOCKER_REGISTRY: aimsalesacr.azurecr.io
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Secrets から環境変数をセット
+      - name: Setup environment variables from secrets
+        id: setup-env
+        env:
+          DEPLOY_SETTINGS: ${{ secrets.AZURE_DEPLOY_SETTINGS }}
+        run: |
+          if ! echo "$DEPLOY_SETTINGS" | jq -e . >/dev/null 2>&1; then
+            echo "❌ AZURE_DEPLOY_SETTINGS JSONの形式に問題があります"
+            exit 1
+          fi
+          echo "AZURE_CLIENTID=$(echo "$DEPLOY_SETTINGS" | jq -r '.AZURE_CREDENTIALS.clientId')" >> $GITHUB_ENV
+          echo "AZURE_TENANTID=$(echo "$DEPLOY_SETTINGS" | jq -r '.AZURE_CREDENTIALS.tenantId')" >> $GITHUB_ENV
+          echo "AZURE_SUBSCRIPTIONID=$(echo "$DEPLOY_SETTINGS" | jq -r '.AZURE_CREDENTIALS.subscriptionId')" >> $GITHUB_ENV
+          echo "AZURE_CLIENTSECRET=$(echo "$DEPLOY_SETTINGS" | jq -r '.AZURE_CREDENTIALS.clientSecret')" >> $GITHUB_ENV
+          echo "AZURE_ACRUSERNAME=$(echo "$DEPLOY_SETTINGS" | jq -r '.AZURE_CREDENTIALS.acrUsername')" >> $GITHUB_ENV
+          echo "AZURE_ACRPASSWORD=$(echo "$DEPLOY_SETTINGS" | jq -r '.AZURE_CREDENTIALS.acrPassword')" >> $GITHUB_ENV
+          echo "AZURE_RESOURCE_GROUP=$(echo "$DEPLOY_SETTINGS" | jq -r '.AZURE_RESOURCE_GROUP')" >> $GITHUB_ENV
+          echo "creds=$(echo "$DEPLOY_SETTINGS" | jq -c '.AZURE_CREDENTIALS')" >> $GITHUB_OUTPUT
+          echo "DOCKER_IMAGE_NAME=${{ secrets.DOCKER_IMAGE_NAME }}" >> $GITHUB_ENV
+        shell: bash
+
+      # 3. Docker Buildx アクション
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 4. ACR ログイン
+      - name: Log in to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ env.AZURE_ACRUSERNAME }}
+          password: ${{ env.AZURE_ACRPASSWORD }}
+
+      # 5. ビルド用変数の設定
+      - name: Set build variables
+        run: |
+          echo "APP_VERSION=$(date +'%Y.%m.%d.%H.%M')" >> $GITHUB_ENV
+          echo "DEPLOYMENT_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
+          COMMIT_MESSAGE=$(git log -1 --pretty=%B | tr '\n' ' ' | jq -Rsa . | jq -r .)
+          echo "COMMIT_MESSAGE=${COMMIT_MESSAGE}" >> $GITHUB_ENV
+        shell: bash
+
+      # 6. Docker Build & Push
+      - name: Build and push container image
+        uses: docker/build-push-action@v6
+        with:
+          # Dockerfile 配置ディレクトリ（マルチステージのDockerfileを指定）
+          context: .
+          file: ./Dockerfile
+          push: true
+          # pull: false にすることで常にベースイメージを再取得しない
+          pull: false
+          tags: ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }}
+          build-args: |
+            APP_VERSION=${{ env.APP_VERSION }}
+            DEPLOYMENT_TIME=${{ env.DEPLOYMENT_TIME }}
+            COMMIT_MESSAGE=${{ env.COMMIT_MESSAGE }}
+          # BuildKit キャッシュを利用（requirements.txt のハッシュでキャッシュを共有）
+          cache-from: type=gha,scope=fastapi-demo-cache-${{ hashFiles('requirements.txt') }}
+          cache-to: type=gha,scope=fastapi-demo-cache-${{ hashFiles('requirements.txt') }},mode=max
+
+      # 7. Azure CLI へログイン
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ steps.setup-env.outputs.creds }}
+
+      # 8. App Settings を変更
+      - name: Update App Settings in Azure
+        env:
+          APP_SETTINGS: ${{ secrets.AZURE_APP_SETTINGS }}
+        run: |
+          CURRENT=$(az webapp config appsettings list \
+            --name ${{ env.DOCKER_IMAGE_NAME }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --output json)
+          DESIRED=$(jq -n \
+            --arg azureAppSettings "$APP_SETTINGS" \
+            ' [ {"name":"AZURE_APP_SETTINGS","value":$azureAppSettings} ] ')
+          CURRENT_SORTED=$(echo "$CURRENT" | jq 'sort_by(.name)')
+          DESIRED_SORTED=$(echo "$DESIRED" | jq 'sort_by(.name)')
+          if [ "$CURRENT_SORTED" != "$DESIRED_SORTED" ]; then
+            echo "🛠️ App Settings changed, updating..."
+            az webapp config appsettings set \
+              --name ${{ env.DOCKER_IMAGE_NAME }} \
+              --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+              --settings \
+              AZURE_APP_SETTINGS="$APP_SETTINGS" \
+              APP_VERSION="$APP_VERSION" \
+              COMMIT_MESSAGE="$COMMIT_MESSAGE" \
+              DEPLOYMENT_TIME="$DEPLOYMENT_TIME"
+          else
+            echo "✅ App Settings are up to date. No change needed."
+          fi
+        shell: bash
+
+      # 10. Azure Web App へデプロイ
+      - name: Deploy to Azure Web App (Multi-container supported)
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.DOCKER_IMAGE_NAME }}
+          slot-name: production
+          publish-profile: ${{ secrets.AzureAppService_PublishProfile }}
+          images: ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }}
+          
+      # 11. 追加のApp Service（<DOCKER_IMAGE_NAME>-1〜5）の更新
+      - name: Update additional App Services (if they exist)
+        run: |
+          # DOCKER_IMAGE_NAME を基準に -1 〜 -5 を生成
+          ADDITIONAL_APPS=(
+            "${{ env.DOCKER_IMAGE_NAME }}-1"
+            "${{ env.DOCKER_IMAGE_NAME }}-2"
+            "${{ env.DOCKER_IMAGE_NAME }}-3"
+            "${{ env.DOCKER_IMAGE_NAME }}-4"
+            "${{ env.DOCKER_IMAGE_NAME }}-5"
+          )
+          
+          for APP_NAME in "${ADDITIONAL_APPS[@]}"; do
+            echo "🔍 Checking if $APP_NAME exists..."
+            
+            # App Serviceの存在確認
+            if az webapp show --name "$APP_NAME" --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query name -o tsv 2>/dev/null; then
+              echo "✅ $APP_NAME exists. Updating settings and deploying..."
+              
+              # 1. App Settingsの更新
+              echo "🛠️ Updating App Settings for $APP_NAME..."
+              az webapp config appsettings set \
+                --name "$APP_NAME" \
+                --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+                --settings \
+                AZURE_APP_SETTINGS="$APP_SETTINGS" \
+                APP_VERSION="$APP_VERSION" \
+                COMMIT_MESSAGE="$COMMIT_MESSAGE" \
+                DEPLOYMENT_TIME="$DEPLOYMENT_TIME"
+              
+              # 2. 同じDockerイメージをデプロイ
+              echo "🚀 Deploying Docker image to $APP_NAME..."
+              az webapp config container set \
+                --name "$APP_NAME" \
+                --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+                --docker-custom-image-name "${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }}" \
+                --docker-registry-server-url "https://${{ env.DOCKER_REGISTRY }}" \
+                --docker-registry-server-user "${{ env.AZURE_ACRUSERNAME }}" \
+                --docker-registry-server-password "${{ env.AZURE_ACRPASSWORD }}"
+              
+              echo "✅ $APP_NAME updated successfully!"
+            else
+              echo "⏭️ $APP_NAME does not exist. Skipping..."
+            fi
+          done
+        shell: bash
+        env:
+          APP_SETTINGS: ${{ secrets.AZURE_APP_SETTINGS }}
+
+  cleanup-artifacts:
+    needs: build-and-deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup old artifacts
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const repo = context.repo;
+            console.log(`リポジトリ: ${repo.owner}/${repo.repo}`);
+            // リポジトリのすべてのArtifactsを取得
+            const artifacts = await github.rest.actions.listArtifactsForRepo({
+              owner: repo.owner,
+              repo: repo.repo,
+              per_page: 100
+            });
+            console.log(`合計 ${artifacts.data.artifacts.length} 個のArtifactsが見つかりました`);
+            // 作成日時でソート（新しい順）
+            const sortedArtifacts = artifacts.data.artifacts.sort((a, b) => {
+              return new Date(b.created_at) - new Date(a.created_at);
+            });
+            // 最新のArtifactを何個残すか
+            const keepCount = 10;
+            // 削除対象のArtifacts
+            const artifactsToDelete = sortedArtifacts.slice(keepCount);
+            console.log(`最新の ${keepCount} 個を保持し、${artifactsToDelete.length} 個のArtifactsを削除します`);
+            // 古いArtifactsを削除
+            for (const artifact of artifactsToDelete) {
+              console.log(`Artifact '${artifact.name}' (ID: ${artifact.id}) を削除中...`);
+              try {
+                await github.rest.actions.deleteArtifact({
+                  owner: repo.owner,
+                  repo: repo.repo,
+                  artifact_id: artifact.id
+                });
+                console.log(`Artifact ID ${artifact.id} の削除に成功しました`);
+              } catch (error) {
+                console.error(`Artifact ID ${artifact.id} の削除中にエラーが発生しました: ${error}`);
+              }
+            }
+            console.log('Artifactのクリーンアップが完了しました');

@@ -1,0 +1,15 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${DOCKER_IMAGE_NAME}:v1
+    ports:
+      - "80:80"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
