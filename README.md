@@ -3,6 +3,20 @@
 FastAPI service that converts any publicly accessible URL (web pages, Notion documents, Google Docs, etc.) into clean Markdown.  
 Internally it relies on the open-source `url2markdown` project (`newspaper3k` + `markdownify`) plus a few HTTP-only fallbacks for tricky, JS-heavy pages.
 
+## Hosted endpoint
+
+You can hit the Vercel deployment at `https://url2markdown-seven.vercel.app`. The interactive Swagger UI lives under `https://url2markdown-seven.vercel.app/docs`.
+
+> ⚠️ This endpoint is provided as-is for convenience; its uptime and lifetime are not guaranteed and the URL may disappear at any time.
+
+To fetch Markdown for any publicly accessible page, append the full target URL right after `/url/reader/` (URL-encoded if necessary). Example:
+
+```bash
+curl -X GET \
+  'https://url2markdown-seven.vercel.app/url/reader/https%3A%2F%2Fwww.notion.so%2Fdify-Aimsales-2a99c708e4d880159321d1f2f87f64a3%3Fsource%3Dcopy_link' \
+  -H 'accept: application/json'
+```
+
 ## Quick start
 
 ```bash
