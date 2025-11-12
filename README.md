@@ -69,6 +69,21 @@ GET /url/reader/https://www.notion.so/dify-Aimsales-2a99c708e4d880159321d1f2f87f
 }
 ```
 
+### Markdownだけ欲しい場合
+
+デフォルトではJSONにメタデータ付きで返却しますが、純粋なMarkdownだけが欲しい場合は次のどちらかを指定してください。
+
+- HTTPヘッダーに `Accept: text/markdown` もしくは `Accept: text/plain` を付与
+- クエリパラメータ `?markdown_only=true` を付与
+
+例:
+
+```bash
+curl -X GET \
+  'https://url2markdown-seven.vercel.app/url/reader/https%3A%2F%2Fwww.notion.so%2Fdify-Aimsales-2a99c708e4d880159321d1f2f87f64a3%3Fsource%3Dcopy_link' \
+  -H 'accept: text/markdown'
+```
+
 ## 仕組み
 
 - **url2markdownパイプライン** – `newspaper3k` で記事を抽出し、`markdownify` で整形済みHTMLをMarkdown化。

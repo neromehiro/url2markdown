@@ -4,9 +4,9 @@ from datetime import datetime, timedelta
 from typing import Any, Dict
 from urllib.parse import unquote
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from services.url_reader import (
@@ -56,7 +56,14 @@ def read_root():
 
 
 @app.get("/url/reader/{encoded_url:path}", response_model=MarkdownResponse)
-async def url_reader(encoded_url: str):
+async def url_reader(
+    encoded_url: str,
+    request: Request,
+    markdown_only: bool = Query(
+        default=False,
+        description="テキストだけを返したい場合に true を指定します。",
+    ),
+):
     """
     Convert any publicly accessible URL into Markdown.
     Example call:
@@ -73,7 +80,17 @@ async def url_reader(encoded_url: str):
     except MarkdownConversionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return MarkdownResponse(**result.to_payload())
+    payload = result.to_payload()
+    accept_header = request.headers.get("accept", "").lower()
+    wants_markdown = markdown_only or any(
+        mime in accept_header for mime in ("text/markdown", "text/plain")
+    )
+    if wants_markdown:
+        return PlainTextResponse(
+            payload["markdown"], media_type="text/markdown; charset=utf-8"
+        )
+
+    return MarkdownResponse(**payload)
 
 
 def format_time(time_str: str | None) -> str:
