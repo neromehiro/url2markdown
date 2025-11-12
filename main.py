@@ -1,56 +1,82 @@
-# main.py
+import logging
+import os
+from datetime import datetime, timedelta
+from typing import Any, Dict
+from urllib.parse import unquote
 
-from fastapi import FastAPI, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import os
-import logging
-from datetime import datetime, timedelta
-from db import get_db_connection
-import requests
-from module.sample.proxy_rotate_check import get_rotating_proxy, check_ip_with_proxy_and_sleep
-# main.py 
+from pydantic import BaseModel, Field
 
- 
+from services.url_reader import (
+    MarkdownConversionError,
+    convert_url_to_markdown,
+)
 
-# ロギングの設定
+# Set up logging once for the entire application.
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-# FastAPIアプリケーションの初期化
-app = FastAPI()
-
-# CORS 設定
-app.add_middleware( 
+# FastAPI app configuration.
+app = FastAPI(title="url2markdown API", version="1.0.0")
+app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # または特定のオリジンを指定
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # すべてのメソッドを許可（GET, POST, OPTIONS など）
-    allow_headers=["*"],  # 任意のヘッダーを許可
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-
-
-
-
-###
-
-# デプロイ情報の取得
+# Deployment metadata (useful for health checks).
 APP_VERSION = os.environ.get("APP_VERSION", "Unknown")
 DEPLOYMENT_TIME = os.environ.get("DEPLOYMENT_TIME", "Unknown")
 COMMIT_MESSAGE = os.environ.get("COMMIT_MESSAGE", "No commit message")
 
 
+class MarkdownResponse(BaseModel):
+    source_url: str
+    final_url: str
+    title: str | None = None
+    markdown: str
+    word_count: int
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
 @app.get("/")
 def read_root():
-    # JSONResponseを使用して明示的にJSONレスポンスを返す
-    return JSONResponse(content={
-        "アプリバージョン": APP_VERSION,
-        "最終デプロイ日時": format_time(DEPLOYMENT_TIME),
-        "コミットメッセージ": COMMIT_MESSAGE
-    })
-def format_time(time_str):
+    """Simple metadata endpoint to confirm the service is running."""
+    return JSONResponse(
+        content={
+            "app_version": APP_VERSION,
+            "deployment_time": format_time(DEPLOYMENT_TIME),
+            "commit_message": COMMIT_MESSAGE,
+        }
+    )
+
+
+@app.get("/url/reader/{encoded_url:path}", response_model=MarkdownResponse)
+async def url_reader(encoded_url: str):
+    """
+    Convert any publicly accessible URL into Markdown.
+    Example call:
+      GET /url/reader/https://example.com/some-article
+    """
+    target_url = unquote(encoded_url.strip())
+    if not target_url.startswith(("http://", "https://")):
+        raise HTTPException(
+            status_code=400, detail="URL must start with http:// or https://"
+        )
+
+    try:
+        result = await convert_url_to_markdown(target_url)
+    except MarkdownConversionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return MarkdownResponse(**result.to_payload())
+
+
+def format_time(time_str: str | None) -> str:
     if time_str and time_str != "Unknown":
         try:
             deploy_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%SZ")
@@ -61,36 +87,7 @@ def format_time(time_str):
     return "不明"
 
 
-@app.get("/proxy-rotate-check")
-async def proxy_rotate_check():
-    """
-    ローテーションプロキシ経由でIPアドレスを確認するエンドポイント
-    """
-    try:
-        # Webshareの認証情報
-        username = "oaghpvrh-rotate"
-        password = "ak24ante1ua4"
-        
-        # プロキシ経由でIPアドレスを取得
-        ip_address = await check_ip_with_proxy_and_sleep(username, password)
-        
-        # ローテーションプロキシのIPを取得（オプション）
-        rotating_proxy_ip = get_rotating_proxy()
-        
-        return {
-            "status": "success",
-            "ip": ip_address,
-            "rotating_proxy_ip": rotating_proxy_ip,
-            "message": "プロキシローテーション経由の現在のIPアドレスです"
-        }
-    except Exception as e:
-        logger.error("プロキシローテーション経由のIPアドレス取得エラー: %s", str(e))
-        return {
-            "status": "error",
-            "message": f"エラーが発生しました: {str(e)}"
-        }
-
-# サーバー起動（開発環境用） 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.4
 
-# Python 3.12 + Playwright が含まれた公式イメージを使用
-FROM mcr.microsoft.com/playwright/python:v1.52.0-noble AS builder
+# Python 3.12-slim 公式イメージを使用
+FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
@@ -11,14 +11,15 @@ COPY requirements.txt .
 # 2) BuildKitのcacheマウント機能を使ってインストール
 #    pipによるダウンロードキャッシュを /root/.cache/pip に保持し、次回以降のbuildを高速化
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip3 install -r requirements.txt
+    pip3 install -r requirements.txt && \
+    pip3 install python-multipart
 
 
 # 3) ソースコードをまとめてコピー
 COPY . .
 
 # ---- Final ステージ ----
-FROM mcr.microsoft.com/playwright/python:v1.52.0-noble AS final
+FROM python:3.12-slim AS final
 
 WORKDIR /app
 
