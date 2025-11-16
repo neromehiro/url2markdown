@@ -2,7 +2,7 @@ import logging
 import os
 from datetime import datetime, timedelta
 from typing import Any, Dict
-from urllib.parse import unquote
+from urllib.parse import unquote, urlencode
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,6 +32,7 @@ app.add_middleware(
 APP_VERSION = os.environ.get("APP_VERSION", "Unknown")
 DEPLOYMENT_TIME = os.environ.get("DEPLOYMENT_TIME", "Unknown")
 COMMIT_MESSAGE = os.environ.get("COMMIT_MESSAGE", "No commit message")
+RESERVED_QUERY_PARAMS = {"markdown_only"}
 
 
 class MarkdownResponse(BaseModel):
@@ -69,7 +70,7 @@ async def url_reader(
     Example call:
       GET /url/reader/https://example.com/some-article
     """
-    target_url = unquote(encoded_url.strip())
+    target_url = _extract_target_url(encoded_url, request)
     if not target_url.startswith(("http://", "https://")):
         raise HTTPException(
             status_code=400, detail="URL must start with http:// or https://"
@@ -82,15 +83,36 @@ async def url_reader(
 
     payload = result.to_payload()
     accept_header = request.headers.get("accept", "").lower()
-    wants_markdown = markdown_only or any(
-        mime in accept_header for mime in ("text/markdown", "text/plain")
+    wants_json = (
+        not markdown_only
+        and accept_header
+        and "application/json" in accept_header
     )
-    if wants_markdown:
+    if not wants_json:
         return PlainTextResponse(
             payload["markdown"], media_type="text/markdown; charset=utf-8"
         )
 
     return MarkdownResponse(**payload)
+
+
+@app.get("/{raw_url:path}", include_in_schema=False)
+async def root_passthrough(
+    raw_url: str,
+    request: Request,
+    markdown_only: bool = Query(
+        default=False,
+        description="テキストだけを返したい場合に true を指定します。",
+    ),
+):
+    """
+    Allow requests like /https://example.com by delegating to url_reader.
+    """
+    if not raw_url:
+        raise HTTPException(status_code=404, detail="Not Found")
+    if not raw_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=404, detail="Not Found")
+    return await url_reader(raw_url, request, markdown_only)
 
 
 def format_time(time_str: str | None) -> str:
@@ -108,3 +130,21 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+def _extract_target_url(encoded_url: str, request: Request) -> str:
+    """
+    Combine the path parameter and any non-reserved query params to rebuild the raw URL.
+    This enables callers to omit URL encoding even when the target contains query strings.
+    """
+    trimmed = encoded_url.strip()
+    if not trimmed:
+        return ""
+    passthrough_query = [
+        (key, value)
+        for key, value in request.query_params.multi_items()
+        if key not in RESERVED_QUERY_PARAMS
+    ]
+    if passthrough_query:
+        trimmed = f"{trimmed}?{urlencode(passthrough_query, doseq=True)}"
+    return unquote(trimmed)
